@@ -1,0 +1,157 @@
+A. install Mysql-server for external db as HA as follows 
+	i.   $ sudo wget https://dev.mysql.com/get/mysql80-community-release-el7-1.noarch.rpm
+	ii.  $ sudo rpm -Uvh mysql80-community-release-el7-1.noarch.rpm
+	iii. $ sudo yum repolist all | grep mysql
+	iv.  $ sudo yum-config-manager --disable mysql80-community
+	v.   $ sudo yum-config-manager --enable mysql57-community
+	vi.  $ sudo yum repolist enabled | grep mysql
+	vii. $ sudo yum install mysql-community-server
+	viii.$ sudo service mysqld start
+	
+step 1. login as root
+step 2. grep 'temporary password' /var/log/mysqld.log
+step 3. Copy the password and do the following ,
+
+1 mysql -u root -p
+2 Enter the temporary password
+
+so do the following
+ALTER USER 'root'@'localhost' identified by 'your new password';
+ALTER USER 'root'@'localhost' PASSWORD EXPIRE NEVER;
+
+passwd:- cloudera
+
+B. replace my.cnf (/etc/my.cnf) with cloudera recommended option file along with HA parameters
+
+C. download mysql-connector
+ # wget link
+ # tar zxvf mysql-connector-java-5.1.31.tar.gz
+ # cp mysql-connector-java-5.1.31/mysql-connector-java-5.1.31-bin.jar /usr/share/java/mysql-connector-java.jar
+ 
+ then #mysql -u root -p
+
+D. create DB for CDH/CM
+
+1.		Create a database for the Service Monitor.
+mysql> create database smon DEFAULT CHARACTER SET utf8;
+mysql> grant all on smon.* TO 'smon'@'%' IDENTIFIED BY 'passwd';
+
+2.		Create a database for the Service Monitor.
+mysql> create database amon DEFAULT CHARACTER SET utf8;
+mysql> grant all on amon.* TO 'amon'@'%' IDENTIFIED BY 'passwd';
+
+3.       Create a database for the Host Monitor.
+mysql> create database hmon DEFAULT CHARACTER SET utf8;
+mysql> grant all on hmon.* TO 'hmon'@'%' IDENTIFIED BY 'passwd';
+
+4.       Create a database for the Report Manager.
+mysql> create database rman DEFAULT CHARACTER SET utf8;
+mysql> grant all on rman.* TO 'rman'@'%' IDENTIFIED BY 'passwd';
+
+5.       Create a database for Cloudera Navigator (optional).
+mysql> create database nav DEFAULT CHARACTER SET utf8;
+mysql> grant all on nav.* TO 'nav'@'%' IDENTIFIED BY 'passwd';
+
+6.       Create a database for the Hive metastore. Create a separate metastore for each Hive service, if you have more than one.
+mysql> create database hive DEFAULT CHARACTER SET utf8;
+mysql> grant all on hive.* TO 'hive'@'%' IDENTIFIED BY 'passwd';
+
+7.       Create a database for Hue.
+mysql> create database hue DEFAULT CHARACTER SET utf8;
+mysql> grant all on hue.* to 'hue'@'%' IDENTIFIED BY 'passwd';
+
+8.       Create a database for Oozie.
+mysql> create database oozie DEFAULT CHARACTER SET utf8;
+mysql> grant all on oozie.* to 'oozie'@'%' IDENTIFIED BY 'passwd';
+
+
+
+High Availability of mysql (master-master/slave-slave config)
+
+--------Master-1 Machine------------
+1. Firewall configuration
+	#firewall-cmd --permanent --add-service=mysql
+	#firewall-cmd --reload
+
+2. Identifiaction configuration
+	# vim /etc/my.cnf
+		server-id=10
+		log-bin=mysql-bin or cloudera specified.
+		
+	# systemctl restart mysqld
+	
+3. mysql DB configuration
+	# mysql
+	> create user 'centos'@'%' identified by '12345';
+	> grant replication slave on *.* to 'reply'@'%' identified by '12345';
+	> flush privileges;
+	> flush tables with read lock;
+	> show master status;
+	
+	Master ip-172-31-11-45.us-east-2.compute.internal
++-------------------------+----------+--------------+------------------+-------------------+
+| File                    | Position | Binlog_Do_DB | Binlog_Ignore_DB | Executed_Gtid_Set |
++-------------------------+----------+--------------+------------------+-------------------+
+| mysql_binary_log.000008 |      560 |              |                  |                   |
++-------------------------+----------+--------------+------------------+-------------------+
+
+
+4. Take DB dumb & transfer to master2
+	# mysqldump mysql > mysql-db.sql
+	
+	# rsync -Pavzxl mysql-db.sql centos@ip-172-31-5-47.us-east-2.compute.internal:~/
+
+
+
+
+------------------Master-2 Machine------------------
+1. Firewall configuration
+	#firewall-cmd --permanent --add-service=mysql
+	#firewall-cmd --reload
+
+2. Identifiaction configuration
+	# vim /etc/my.cnf
+		server-id=10
+		log-bin=mysql-bin or cloudera specified.
+
+	# systemctl restart mysqld
+	
+3. Inject the MySQL dump file into master2 database.
+	# mysql mysql < mysql-db.sql
+
+4. Configuring slave DB 
+	# mysql
+	 > stop slave;
+	 > change master to
+	-> master_host = 'ip-172-31-11-45.us-east-2.compute.internal',
+    -> master_user = 'centos',
+    -> master_password = '12345',
+    -> master_log_file = 'mysql_binary_log.000008',
+    -> master_log_pos = 560;
+	 > start slave;
+	 > show processlist;
+----Checck Slave Status------
+    > show slave status\G; 
+
+	
+	
+	
+------Master Machine------------
+
+1. Check the established connection using netstat command. 
+	# netstat -natp | egrep -i established.*mysql
+	
+2. Open the MySQL shell and check the processlist and also configure the replication settings.
+	# mysql
+	> unlock tables;
+	> show processlist;
+	> change master to 
+	-> master_host = 'ip-172-31-5-47.us-east-2.compute.internal',
+    -> master_user = 'centos',
+    -> master_password = '12345',
+    -> master_log_file = 'mysql_binary_log.000009',
+    -> master_log_pos = 120;
+	
+	> start slave;
+	> show slave status\G;
+	>exit;
